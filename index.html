@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>拆彈專家 - 距離感應遊戲</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+
+        #start-screen {
+            text-align: center;
+            z-index: 100;
+        }
+
+        #game-title {
+            font-size: 64px;
+            margin-bottom: 30px;
+            text-shadow: 0 0 20px rgba(231, 76, 60, 0.8);
+        }
+
+        .stats {
+            font-size: 24px;
+            margin: 20px 0;
+            text-shadow: 0 0 10px rgba(0,0,0,0.5);
+            display: none;
+        }
+
+        #start-btn {
+            padding: 15px 40px;
+            font-size: 20px;
+            cursor: pointer;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            pointer-events: auto;
+            transition: transform 0.2s;
+        }
+
+        #start-btn:hover {
+            transform: scale(1.1);
+        }
+
+        #game-board {
+            display: grid;
+            /* 網格大小將由 JS 動態設定 */
+            gap: 2px;
+            background-color: #333;
+            border: 2px solid #444;
+            display: none; /* 初始隱藏 */
+            pointer-events: auto;
+            margin-bottom: 20px;
+        }
+
+        .cell {
+            width: 35px;
+            height: 35px;
+            background-color: #2c3e50;
+            border: 1px solid #34495e;
+            box-sizing: border-box;
+        }
+
+        /* 自定義圓球游標 */
+        #custom-cursor {
+            position: fixed;
+            width: 10px;
+            height: 10px;
+            background-color: #00ff00;
+            border-radius: 50%;
+            pointer-events: none; /* 確保點擊穿透到格子 */
+            z-index: 999;
+            transform: translate(-50%, -50%);
+            display: none;
+            box-shadow: 0 0 15px #00ff00;
+            transition: width 0.05s ease, height 0.05s ease;
+        }
+
+        .game-over-msg {
+            position: absolute;
+            font-size: 48px;
+            font-weight: bold;
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen">
+        <h1 id="game-title">拆彈專家</h1>
+        <button id="start-btn">開始尋找炸彈</button>
+    </div>
+
+    <div id="stats-bar" class="stats">時間: <span id="timer">30</span>s | 剩餘機會: <span id="lives">3</span></div>
+    <div id="game-board"></div>
+    <div id="custom-cursor"></div>
+    <div id="msg" class="game-over-msg"></div>
+
+    <script>
+        const board = document.getElementById('game-board');
+        const startBtn = document.getElementById('start-btn');
+        const startScreen = document.getElementById('start-screen');
+        const statsBar = document.getElementById('stats-bar');
+        const timerEl = document.getElementById('timer');
+        const livesEl = document.getElementById('lives');
+        const cursor = document.getElementById('custom-cursor');
+        const msgEl = document.getElementById('msg');
+        const gameTitle = document.getElementById('game-title');
+
+        let bombIndex = -1;
+        let timeLeft = 30;
+        let lives = 3;
+        let gameActive = false;
+        let timerInterval;
+        
+        // 設定較多的網格數量以填滿螢幕
+        const cols = 30;
+        const rows = 18;
+        let cells = [];
+
+        // 初始化網格
+        function initBoard() {
+            board.style.gridTemplateColumns = `repeat(${cols}, 35px)`;
+            board.innerHTML = '';
+            cells = [];
+            for (let i = 0; i < rows * cols; i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                cell.dataset.index = i;
+                cell.addEventListener('click', (e) => handleCellClick(i));
+                board.appendChild(cell);
+                cells.push(cell);
+            }
+        }
+
+        // 開始遊戲
+        startBtn.addEventListener('click', () => {
+            document.body.style.cursor = 'none'; // 遊戲開始，隱藏原生滑鼠
+            startScreen.style.display = 'none';
+            statsBar.style.display = 'block';
+            board.style.display = 'grid';
+            cursor.style.display = 'block';
+            msgEl.style.display = 'none';
+            cursor.style.width = '10px';
+            cursor.style.height = '10px';
+            
+            initBoard(); // 確保每次開始都重置網格與陣列
+            gameActive = true;
+            timeLeft = 30;
+            lives = 3;
+            timerEl.textContent = timeLeft;
+            livesEl.textContent = lives;
+            
+            // 隨機炸彈位置
+            bombIndex = Math.floor(Math.random() * (rows * cols));
+            
+            startTimer();
+        });
+
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                timerEl.textContent = timeLeft;
+                if (timeLeft <= 0) {
+                    endGame("炸彈爆炸了！時間到！", false);
+                }
+            }, 1000);
+        }
+
+        // 滑鼠移動邏輯
+        document.addEventListener('mousemove', (e) => {
+            cursor.style.left = e.clientX + 'px';
+            cursor.style.top = e.clientY + 'px';
+            
+            if (gameActive) {
+                updateCursorSize(e.clientX, e.clientY);
+            }
+        });
+
+        // 計算距離並動態調整圓球大小
+        function updateCursorSize(mouseX, mouseY) {
+            if (!gameActive) return;
+
+            // 獲取炸彈格子的中心點
+            const bombCell = board.children[bombIndex];
+            const rect = bombCell.getBoundingClientRect();
+            const bombX = rect.left + rect.width / 2;
+            const bombY = rect.top + rect.height / 2;
+
+            // 計算歐幾里得距離
+            const dist = Math.sqrt(Math.pow(mouseX - bombX, 2) + Math.pow(mouseY - bombY, 2));
+
+            // 限制圓球最大直徑不超過網格邊長 (35px)，最小為 5px
+            const maxCursorSize = 31; 
+            const newSize = Math.max(5, maxCursorSize - (dist / 12));
+
+            cursor.style.width = newSize + 'px';
+            cursor.style.height = newSize + 'px';
+        }
+
+        function handleCellClick(index) {
+            if (!gameActive) return;
+
+            if (index === bombIndex) {
+                endGame("成功解除炸彈!", true);
+            } else {
+                lives--;
+                livesEl.textContent = lives;
+                // 點錯反饋
+                cells[index].style.backgroundColor = '#c0392b';
+                
+                if (lives <= 0) {
+                    endGame("碰！點錯太多次，炸彈爆炸了！", false);
+                }
+            }
+        }
+
+        function endGame(message, isWin) {
+            gameActive = false;
+            clearInterval(timerInterval);
+            document.body.style.cursor = 'default'; // 遊戲結束，恢復原生滑鼠
+            
+            msgEl.textContent = message;
+            msgEl.style.display = 'block';
+            msgEl.style.color = isWin ? '#2ecc71' : '#e74c3c';
+            
+            // 顯示炸彈位置
+            cells[bombIndex].style.backgroundColor = '#f1c40f';
+            cells[bombIndex].innerText = '💣';
+            cells[bombIndex].style.display = 'flex';
+            cells[bombIndex].style.alignItems = 'center';
+            cells[bombIndex].style.justifyContent = 'center';
+            cells[bombIndex].style.fontSize = '24px';
+
+            cursor.style.display = 'none';
+
+            if (isWin) {
+                setTimeout(() => {
+                    msgEl.style.display = 'none';
+                    startScreen.style.display = 'block';
+                    startBtn.textContent = '再玩一次';
+                }, 3000);
+            } else {
+                setTimeout(() => {
+                    startScreen.style.display = 'block';
+                    startBtn.textContent = '再玩一次';
+                }, 2000);
+            }
+        }
+
+        initBoard();
+    </script>
+</body>
+</html>
